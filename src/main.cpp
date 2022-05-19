@@ -1,16 +1,19 @@
+#include <Firebase_ESP_Client.h>
+#include <WiFi.h>
+#include <addons/RTDBHelper.h>
+#include <addons/TokenHelper.h>
+#include <secrets.h>
 #include <string.h>
 
-#include <WiFi.h>
-#include <Firebase_ESP_Client.h>
-#include <addons/TokenHelper.h>
-#include <addons/RTDBHelper.h>
-
-#include <secrets.h>
-
-#define LED_1_PIN 2
-#define LED_2_PIN 23
+// set 1
+#define OCCUPIED_LED_1_PIN 2
+#define RESERVED_LED_1_PIN 4
 #define ECHO_1_PIN 25
 #define TRIG_1_PIN 26
+
+// set 2
+#define OCCUPIED_LED_2_PIN 21
+#define RESERVED_LED_2_PIN 23
 #define ECHO_2_PIN 32
 #define TRIG_2_PIN 33
 
@@ -23,8 +26,10 @@ FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig config;
 
-// variable declarations 
-bool isWithinRange = false, isPrevWithinRange = false, withinRangeStatuses[] = {false, false};
+// variable declarations
+bool isReserved = false;
+bool isWithinRange = false;
+bool withinRangeStatuses[] = {false, false};
 unsigned long sendDataPrevMillis = 0;
 float newDistance = 0;
 String uid = "";
@@ -42,7 +47,14 @@ void initWifi() {
   Serial.println();
 }
 
-void getSensorInfo(int sensorNumber, String lotNumber, int trigPin, int echoPin, int ledPin) {
+void getSensorInfo(
+  int sensorNumber,
+  String lotNumber,
+  int trigPin,
+  int echoPin,
+  int occupiedLedPin,
+  int reservedLedPin
+) {
   // generate 10-us pulse to TRIG pin
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
@@ -54,13 +66,26 @@ void getSensorInfo(int sensorNumber, String lotNumber, int trigPin, int echoPin,
   // check if distance is within range
   isWithinRange = newDistance <= MAX_DISTANCE_CM;
 
+  // check if lot is reserved
+  if (Firebase.RTDB.getBool(
+        &fbdo, String("lotReservationStatuses/" + lotNumber)
+      )) {
+    if (fbdo.dataType() == "boolean") {
+      digitalWrite(reservedLedPin, fbdo.boolData());
+    }
+  } else {
+    Serial.println("READ FAILED: " + fbdo.errorReason());
+  }
+
   // outputs
-  digitalWrite(ledPin, isWithinRange);
+  digitalWrite(occupiedLedPin, isWithinRange);
 
   Serial.println("Lot " + lotNumber + ": " + newDistance + "cm");
 
   if (withinRangeStatuses[sensorNumber] != isWithinRange) {
-    if (not Firebase.RTDB.setBool(&fbdo, String("lots/" + lotNumber), isWithinRange)) {
+    if (not Firebase.RTDB.setBool(
+          &fbdo, String("lotStatuses/" + lotNumber), isWithinRange
+        )) {
       Serial.println("WRITE FAILED: " + fbdo.errorReason());
     }
   }
@@ -90,7 +115,7 @@ void setup() {
 
   // Assign the maximum retry of token generation
   config.max_token_generation_retry = 5;
-  
+
   Firebase.begin(&config, &auth);
 
   // Get and print user UID
@@ -102,11 +127,15 @@ void setup() {
   uid = auth.token.uid.c_str();
   Serial.print("User UID: " + uid + "\n");
 
-  // Pin setup
-  pinMode(LED_1_PIN, OUTPUT);
-  pinMode(LED_2_PIN, OUTPUT);
+  // Pin setup 1
+  pinMode(OCCUPIED_LED_1_PIN, OUTPUT);
+  pinMode(RESERVED_LED_1_PIN, OUTPUT);
   pinMode(ECHO_1_PIN, INPUT);
   pinMode(TRIG_1_PIN, OUTPUT);
+
+  // Pin setup 2
+  pinMode(OCCUPIED_LED_2_PIN, OUTPUT);
+  pinMode(RESERVED_LED_2_PIN, OUTPUT);
   pinMode(ECHO_2_PIN, INPUT);
   pinMode(TRIG_2_PIN, OUTPUT);
 }
@@ -115,8 +144,23 @@ void loop() {
   if (Firebase.ready() && millis() - sendDataPrevMillis > POLLING_RATE_MS || sendDataPrevMillis == 0) {
     sendDataPrevMillis = millis();
 
-    getSensorInfo(0, "1A-001", TRIG_1_PIN, ECHO_1_PIN, LED_1_PIN);
-    getSensorInfo(1, "1A-002", TRIG_2_PIN, ECHO_2_PIN, LED_2_PIN);
+    getSensorInfo(
+      0,
+      "1A-001",
+      TRIG_1_PIN,
+      ECHO_1_PIN,
+      OCCUPIED_LED_1_PIN,
+      RESERVED_LED_1_PIN
+    );
+
+    getSensorInfo(
+      1,
+      "1A-002",
+      TRIG_2_PIN,
+      ECHO_2_PIN,
+      OCCUPIED_LED_2_PIN,
+      RESERVED_LED_2_PIN
+    );
 
     Serial.println("----------------------------------------");
   }
