@@ -1,4 +1,5 @@
 {
+  "C_Cpp.clang_format_fallbackStyle": "{ BasedOnStyle: Google, IndentWidth: 2, ContinuationIndentWidth: 2, AlignAfterOpenBracket: BlockIndent, BinPackArguments: false, BinPackParameters: false }",
   "files.associations": {
     "iterator": "cpp"
   }
