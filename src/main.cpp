@@ -6,18 +6,21 @@
 #include <string.h>
 
 // set 1
-#define OCCUPIED_LED_1_PIN 2
-#define RESERVED_LED_1_PIN 4
-#define ECHO_1_PIN 25
-#define TRIG_1_PIN 26
+#define LOT_NUMBER_1 "1A-001"
+#define OCCUPIED_LED_PIN_1 2
+#define RESERVED_LED_PIN_1 4
+#define ECHO_PIN_1 25
+#define TRIG_PIN_1 26
 
 // set 2
-#define OCCUPIED_LED_2_PIN 21
-#define RESERVED_LED_2_PIN 23
-#define ECHO_2_PIN 32
-#define TRIG_2_PIN 33
+#define LOT_NUMBER_2 "1A-002"
+#define OCCUPIED_LED_PIN_2 21
+#define RESERVED_LED_PIN_2 23
+#define ECHO_PIN_2 32
+#define TRIG_PIN_2 33
 
-#define POLLING_RATE_MS 1000
+#define SEND_POLLING_RATE_MS 1000
+#define RECEIVE_POLLING_RATE_MS 3000
 #define MAX_DISTANCE_CM 20
 
 // Define Firebase Data object
@@ -31,8 +34,10 @@ bool isReserved = false;
 bool isWithinRange = false;
 bool withinRangeStatuses[] = {false, false};
 unsigned long sendDataPrevMillis = 0;
+unsigned long receiveDataPrevMillis = 0;
 float newDistance = 0;
 String uid = "";
+String lotNumbers[] = {LOT_NUMBER_1, LOT_NUMBER_2};
 
 void initWifi() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -41,19 +46,16 @@ void initWifi() {
     Serial.print(".");
     delay(300);
   }
-  Serial.println();
-  Serial.print("Connected with IP: ");
-  Serial.println(WiFi.localIP());
+  Serial.print("\nConnected with IP: " + WiFi.localIP());
   Serial.println();
 }
 
 void getSensorInfo(
   int sensorNumber,
-  String lotNumber,
-  int trigPin,
-  int echoPin,
-  int occupiedLedPin,
-  int reservedLedPin
+  short trigPin,
+  short echoPin,
+  short occupiedLedPin,
+  short reservedLedPin
 ) {
   // generate 10-us pulse to TRIG pin
   digitalWrite(trigPin, HIGH);
@@ -66,25 +68,16 @@ void getSensorInfo(
   // check if distance is within range
   isWithinRange = newDistance <= MAX_DISTANCE_CM;
 
-  // check if lot is reserved
-  if (Firebase.RTDB.getBool(
-        &fbdo, String("lotReservationStatuses/" + lotNumber)
-      )) {
-    if (fbdo.dataType() == "boolean") {
-      digitalWrite(reservedLedPin, fbdo.boolData());
-    }
-  } else {
-    Serial.println("READ FAILED: " + fbdo.errorReason());
-  }
-
   // outputs
   digitalWrite(occupiedLedPin, isWithinRange);
 
-  Serial.println("Lot " + lotNumber + ": " + newDistance + "cm");
+  Serial.println("Lot " + lotNumbers[sensorNumber] + ": " + newDistance + "cm");
 
   if (withinRangeStatuses[sensorNumber] != isWithinRange) {
     if (not Firebase.RTDB.setBool(
-          &fbdo, String("lotStatuses/" + lotNumber), isWithinRange
+          &fbdo,
+          String("lotStatuses/" + lotNumbers[sensorNumber]),
+          isWithinRange
         )) {
       Serial.println("WRITE FAILED: " + fbdo.errorReason());
     }
@@ -93,6 +86,18 @@ void getSensorInfo(
   withinRangeStatuses[sensorNumber] = isWithinRange;
 
   delay(50);
+}
+
+void getReservationStatus(int sensorNumber, short reservedLedPin) {
+  if (Firebase.RTDB.getBool(
+        &fbdo, String("lotReservationStatuses/" + lotNumbers[sensorNumber])
+      )) {
+    if (fbdo.dataType() == "boolean") {
+      digitalWrite(reservedLedPin, fbdo.boolData());
+    }
+  } else {
+    Serial.println("READ FAILED: " + fbdo.errorReason());
+  }
 }
 
 void setup() {
@@ -128,40 +133,38 @@ void setup() {
   Serial.print("User UID: " + uid + "\n");
 
   // Pin setup 1
-  pinMode(OCCUPIED_LED_1_PIN, OUTPUT);
-  pinMode(RESERVED_LED_1_PIN, OUTPUT);
-  pinMode(ECHO_1_PIN, INPUT);
-  pinMode(TRIG_1_PIN, OUTPUT);
+  pinMode(OCCUPIED_LED_PIN_1, OUTPUT);
+  pinMode(RESERVED_LED_PIN_1, OUTPUT);
+  pinMode(ECHO_PIN_1, INPUT);
+  pinMode(TRIG_PIN_1, OUTPUT);
 
   // Pin setup 2
-  pinMode(OCCUPIED_LED_2_PIN, OUTPUT);
-  pinMode(RESERVED_LED_2_PIN, OUTPUT);
-  pinMode(ECHO_2_PIN, INPUT);
-  pinMode(TRIG_2_PIN, OUTPUT);
+  pinMode(OCCUPIED_LED_PIN_2, OUTPUT);
+  pinMode(RESERVED_LED_PIN_2, OUTPUT);
+  pinMode(ECHO_PIN_2, INPUT);
+  pinMode(TRIG_PIN_2, OUTPUT);
 }
 
 void loop() {
-  if (Firebase.ready() && millis() - sendDataPrevMillis > POLLING_RATE_MS || sendDataPrevMillis == 0) {
-    sendDataPrevMillis = millis();
+  if (Firebase.ready()) {
+    if (millis() - sendDataPrevMillis > SEND_POLLING_RATE_MS || sendDataPrevMillis == 0) {
+      sendDataPrevMillis = millis();
 
-    getSensorInfo(
-      0,
-      "1A-001",
-      TRIG_1_PIN,
-      ECHO_1_PIN,
-      OCCUPIED_LED_1_PIN,
-      RESERVED_LED_1_PIN
-    );
+      getSensorInfo(
+        0, TRIG_PIN_1, ECHO_PIN_1, OCCUPIED_LED_PIN_1, RESERVED_LED_PIN_1
+      );
+      getSensorInfo(
+        1, TRIG_PIN_2, ECHO_PIN_2, OCCUPIED_LED_PIN_2, RESERVED_LED_PIN_2
+      );
 
-    getSensorInfo(
-      1,
-      "1A-002",
-      TRIG_2_PIN,
-      ECHO_2_PIN,
-      OCCUPIED_LED_2_PIN,
-      RESERVED_LED_2_PIN
-    );
+      Serial.println("----------------------------------------");
+    }
 
-    Serial.println("----------------------------------------");
+    if (millis() - receiveDataPrevMillis > RECEIVE_POLLING_RATE_MS || receiveDataPrevMillis == 0) {
+      receiveDataPrevMillis = millis();
+
+      getReservationStatus(0, RESERVED_LED_PIN_1);
+      getReservationStatus(1, RESERVED_LED_PIN_2);
+    }
   }
 }
