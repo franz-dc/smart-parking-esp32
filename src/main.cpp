@@ -7,15 +7,17 @@
 
 // set 1
 #define LOT_NUMBER_1 "1A-001"
-#define OCCUPIED_LED_PIN_1 2
-#define RESERVED_LED_PIN_1 4
+#define RED_LED_PIN_1 2
+#define GREEN_LED_PIN_1 4
+#define BLUE_LED_PIN_1 16
 #define ECHO_PIN_1 25
 #define TRIG_PIN_1 26
 
 // set 2
 #define LOT_NUMBER_2 "1A-002"
-#define OCCUPIED_LED_PIN_2 21
-#define RESERVED_LED_PIN_2 23
+#define RED_LED_PIN_2 21
+#define GREEN_LED_PIN_2 22
+#define BLUE_LED_PIN_2 23
 #define ECHO_PIN_2 32
 #define TRIG_PIN_2 33
 
@@ -32,7 +34,11 @@ FirebaseConfig config;
 // variable declarations
 bool isReserved = false;
 bool isWithinRange = false;
-bool withinRangeStatuses[] = {false, false};
+bool occupiedStatuses[] = {false, false};
+bool reservedStatuses[] = {false, false};
+short ledPins[][3] = {
+  {RED_LED_PIN_1, GREEN_LED_PIN_1, BLUE_LED_PIN_1},
+  {RED_LED_PIN_2, GREEN_LED_PIN_2, BLUE_LED_PIN_2}};
 unsigned long sendDataPrevMillis = 0;
 unsigned long receiveDataPrevMillis = 0;
 float newDistance = 0;
@@ -50,13 +56,13 @@ void initWifi() {
   Serial.println();
 }
 
-void getSensorInfo(
-  int sensorNumber,
-  short trigPin,
-  short echoPin,
-  short occupiedLedPin,
-  short reservedLedPin
-) {
+void setLed(short ledPins[3], short red, short green, short blue) {
+  analogWrite(ledPins[0], red);
+  analogWrite(ledPins[1], green);
+  analogWrite(ledPins[2], blue);
+}
+
+void getSensorInfo(int sensorNumber, short trigPin, short echoPin) {
   // generate 10-us pulse to TRIG pin
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
@@ -69,11 +75,18 @@ void getSensorInfo(
   isWithinRange = newDistance <= MAX_DISTANCE_CM;
 
   // outputs
-  digitalWrite(occupiedLedPin, isWithinRange);
+
+  if (isWithinRange) {
+    setLed(ledPins[sensorNumber], 255, 0, 0);
+  } else {
+    if (!reservedStatuses[sensorNumber]) {
+      setLed(ledPins[sensorNumber], 0, 255, 0);
+    }
+  }
 
   Serial.println("Lot " + lotNumbers[sensorNumber] + ": " + newDistance + "cm");
 
-  if (withinRangeStatuses[sensorNumber] != isWithinRange) {
+  if (occupiedStatuses[sensorNumber] != isWithinRange) {
     if (not Firebase.RTDB.setBool(
           &fbdo,
           String("lotStatuses/" + lotNumbers[sensorNumber]),
@@ -83,17 +96,20 @@ void getSensorInfo(
     }
   }
 
-  withinRangeStatuses[sensorNumber] = isWithinRange;
+  occupiedStatuses[sensorNumber] = isWithinRange;
 
   delay(50);
 }
 
-void getReservationStatus(int sensorNumber, short reservedLedPin) {
+void getReservationStatus(int sensorNumber) {
   if (Firebase.RTDB.getBool(
         &fbdo, String("lotReservationStatuses/" + lotNumbers[sensorNumber])
       )) {
     if (fbdo.dataType() == "boolean") {
-      digitalWrite(reservedLedPin, fbdo.boolData());
+      reservedStatuses[sensorNumber] = fbdo.boolData();
+      if (fbdo.boolData() && !occupiedStatuses[sensorNumber]) {
+        setLed(ledPins[sensorNumber], 0, 0, 255);
+      }
     }
   } else {
     Serial.println("READ FAILED: " + fbdo.errorReason());
@@ -133,14 +149,16 @@ void setup() {
   Serial.print("User UID: " + uid + "\n");
 
   // Pin setup 1
-  pinMode(OCCUPIED_LED_PIN_1, OUTPUT);
-  pinMode(RESERVED_LED_PIN_1, OUTPUT);
+  pinMode(RED_LED_PIN_1, OUTPUT);
+  pinMode(GREEN_LED_PIN_1, OUTPUT);
+  pinMode(BLUE_LED_PIN_1, OUTPUT);
   pinMode(ECHO_PIN_1, INPUT);
   pinMode(TRIG_PIN_1, OUTPUT);
 
   // Pin setup 2
-  pinMode(OCCUPIED_LED_PIN_2, OUTPUT);
-  pinMode(RESERVED_LED_PIN_2, OUTPUT);
+  pinMode(RED_LED_PIN_2, OUTPUT);
+  pinMode(GREEN_LED_PIN_2, OUTPUT);
+  pinMode(BLUE_LED_PIN_2, OUTPUT);
   pinMode(ECHO_PIN_2, INPUT);
   pinMode(TRIG_PIN_2, OUTPUT);
 }
@@ -150,12 +168,8 @@ void loop() {
     if (millis() - sendDataPrevMillis > SEND_POLLING_RATE_MS || sendDataPrevMillis == 0) {
       sendDataPrevMillis = millis();
 
-      getSensorInfo(
-        0, TRIG_PIN_1, ECHO_PIN_1, OCCUPIED_LED_PIN_1, RESERVED_LED_PIN_1
-      );
-      getSensorInfo(
-        1, TRIG_PIN_2, ECHO_PIN_2, OCCUPIED_LED_PIN_2, RESERVED_LED_PIN_2
-      );
+      getSensorInfo(0, TRIG_PIN_1, ECHO_PIN_1);
+      getSensorInfo(1, TRIG_PIN_2, ECHO_PIN_2);
 
       Serial.println("----------------------------------------");
     }
@@ -163,8 +177,8 @@ void loop() {
     if (millis() - receiveDataPrevMillis > RECEIVE_POLLING_RATE_MS || receiveDataPrevMillis == 0) {
       receiveDataPrevMillis = millis();
 
-      getReservationStatus(0, RESERVED_LED_PIN_1);
-      getReservationStatus(1, RESERVED_LED_PIN_2);
+      getReservationStatus(0);
+      getReservationStatus(1);
     }
   }
 }
